@@ -19,7 +19,10 @@ trust and require a restart. The script does not restart services.
 
 ## Requirements
 
-- Python 3.7 or later, with no additional Python packages.
+- Python 3.6 or later on the machine that runs the script, with no additional
+  Python packages. RHEL 8 and RHEL 9 already include a suitable interpreter;
+  see [Running without installing Python](#running-without-installing-python).
+  The target VMs need no Python at all: the payload sent to them is Bash.
 - GCP: authenticated `gcloud`, project inventory permissions, SSH access through
   IAP, and passwordless `sudo` on each VM. Existing OS Login/SSH policy applies.
 - AWS: authenticated AWS CLI v2 profile, permission to inventory enabled regions
@@ -34,12 +37,46 @@ trust and require a restart. The script does not restart services.
   and `gzip` available.
 - HTTPS connectivity to `example.com` for the positive validation check.
 
+## Running without installing Python
+
+The script only uses the Python standard library, so the interpreter that ships
+with RHEL is enough. Nothing needs to be installed from AppStream, EPEL, or pip.
+
+| Control host | Interpreter in the base install | Command to use |
+| --- | --- | --- |
+| RHEL 9 (and Rocky/Alma 9) | `/usr/bin/python3` (Python 3.9), required by `dnf` | `python3 block_emudhra_fleet.py ...` |
+| RHEL 8 (and Rocky/Alma 8) | `/usr/libexec/platform-python` (Python 3.6), required by `dnf` | `/usr/libexec/platform-python block_emudhra_fleet.py ...` |
+
+On RHEL 8, `python3` is not on the PATH until the optional `python36` or
+`python39` package is installed. That is expected: `platform-python` is the
+interpreter Red Hat uses for its own system tooling, and it is always present.
+Use it directly rather than installing a second interpreter. For example:
+
+```bash
+# RHEL 8
+/usr/libexec/platform-python block_emudhra_fleet.py aws --profile AWS_PROFILE
+
+# RHEL 9
+python3 block_emudhra_fleet.py aws --profile AWS_PROFILE
+```
+
+Each provider section below shows both forms.
+
+The cloud CLI (`gcloud`, `aws`, or `az`) is the only tool that must be installed
+on the control host. It does not have to be a RHEL machine: any workstation with
+Python 3.6+ and the authenticated CLI can run the script against the fleet.
+
 ## GCP
 
 ```bash
 git clone https://github.com/stackArmor/emudhra-ca-mitigation.git
 cd emudhra-ca-mitigation
+
+# RHEL 9
 python3 block_emudhra_fleet.py gcp --project PROJECT_ID
+
+# RHEL 8
+/usr/libexec/platform-python block_emudhra_fleet.py gcp --project PROJECT_ID
 ```
 
 The script inventories every zone in the project and uses `gcloud compute ssh`
@@ -49,7 +86,11 @@ SSH failures are reported as failures. Non-running VMs are reported as skipped.
 ## AWS
 
 ```bash
+# RHEL 9
 python3 block_emudhra_fleet.py aws --profile AWS_PROFILE
+
+# RHEL 8
+/usr/libexec/platform-python block_emudhra_fleet.py aws --profile AWS_PROFILE
 ```
 
 The script prints the account ID and enumerates all enabled regions in the
@@ -61,15 +102,25 @@ are reported as skipped. Regional inventory errors are reported as failures.
 For GovCloud, select a discovery endpoint in that partition:
 
 ```bash
+# RHEL 9
 python3 block_emudhra_fleet.py aws --profile AWS_PROFILE \
+  --discovery-region us-gov-west-1
+
+# RHEL 8
+/usr/libexec/platform-python block_emudhra_fleet.py aws --profile AWS_PROFILE \
   --discovery-region us-gov-west-1
 ```
 
 ## Azure
 
 ```bash
+# RHEL 9
 python3 block_emudhra_fleet.py azure --subscription SUBSCRIPTION_ID
-# optionally limit to one resource group
+
+# RHEL 8
+/usr/libexec/platform-python block_emudhra_fleet.py azure --subscription SUBSCRIPTION_ID
+
+# optionally limit to one resource group (either interpreter)
 python3 block_emudhra_fleet.py azure --subscription SUBSCRIPTION_ID \
   --resource-group RESOURCE_GROUP
 ```
@@ -145,7 +196,8 @@ Recheck both incident test endpoints afterward.
 
 ## Validation
 
-The script and embedded Bash payload can be syntax checked without cloud access:
+The script and embedded Bash payload can be syntax checked without cloud access.
+On RHEL 8 run this with `/usr/libexec/platform-python` instead of `python3`:
 
 ```bash
 python3 - <<'PY'
@@ -162,7 +214,7 @@ assignment = next(node for node in tree.body if isinstance(node, ast.Assign)
                           and target.id == 'ROOT_SCRIPT'
                           for target in node.targets))
 payload = ast.literal_eval(assignment.value)
-subprocess.run(['bash', '-n'], input=payload, text=True, check=True)
+subprocess.run(['bash', '-n'], input=payload, universal_newlines=True, check=True)
 print('Python and Bash syntax OK')
 PY
 ```

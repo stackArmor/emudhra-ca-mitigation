@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Apply the RHEL eMudhra root blocklist via GCP SSH, AWS SSM or Azure Run Command.
 
-Requires Python 3 and an authenticated gcloud, AWS CLI v2 or Azure CLI.
+Requires Python 3.6 or later (RHEL 8 platform-python works) and an
+authenticated gcloud, AWS CLI v2 or Azure CLI.
 GCP: IAP SSH access and passwordless sudo on each running VM.
 AWS: EC2 discovery, SSM SendCommand/GetCommandInvocation permissions,
      and SSM Agent connectivity on each running Linux instance.
@@ -105,7 +106,10 @@ def build_payload():
 
 
 def cli(argv, payload=None, timeout=240):
-    result = subprocess.run(argv, input=payload, text=True, capture_output=True, timeout=timeout)
+    # stdout/stderr=PIPE and universal_newlines keep this runnable on Python 3.6
+    # (RHEL 8 platform-python), which lacks capture_output= and text=.
+    result = subprocess.run(argv, input=payload, universal_newlines=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
     if result.returncode:
         raise RuntimeError(f"Exit {result.returncode}\n{result.stdout}\n{result.stderr}".strip())
     return result.stdout
@@ -117,7 +121,7 @@ def cli_json(argv):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = parser.add_subparsers(dest="provider", required=True)
+    sub = parser.add_subparsers(dest="provider")  # required= needs Python 3.7; checked below
     gcp = sub.add_parser("gcp", help="Apply to running VMs across all zones in one project")
     gcp.add_argument("--project", required=True)
     aws = sub.add_parser("aws", help="Apply to running Linux EC2 VMs across enabled regions")
@@ -127,6 +131,8 @@ def main():
     azure.add_argument("--subscription", required=True)
     azure.add_argument("--resource-group", help="Limit to one resource group")
     args = parser.parse_args()
+    if not args.provider:
+        parser.error("a provider is required: gcp, aws or azure")
     payload = build_payload()
     counts = {"passed": 0, "failed": 0, "skipped": 0}
 
