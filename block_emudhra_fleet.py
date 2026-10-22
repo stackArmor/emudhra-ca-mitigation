@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Apply the RHEL eMudhra root blocklist via GCP SSH or AWS SSM.
+"""Apply the RHEL eMudhra root blocklist via GCP SSH, AWS SSM or Azure Run Command.
 
-Requires Python 3 and an authenticated gcloud or AWS CLI v2.
+Requires Python 3 and an authenticated gcloud, AWS CLI v2 or Azure CLI.
 GCP: IAP SSH access and passwordless sudo on each running VM.
 AWS: EC2 discovery, SSM SendCommand/GetCommandInvocation permissions,
      and SSM Agent connectivity on each running Linux instance.
+Azure: Microsoft.Compute/virtualMachines/runCommand/action and a healthy
+       VM agent on each running Linux VM. Scale set instances are not patched.
 Only RHEL/Fedora/CentOS/Rocky/AlmaLinux and Amazon Linux 2023 are supported.
 Stopped instances, Windows, containers and application CA bundles are not patched.
 No cloud resource is changed until this script is explicitly run.
@@ -15,10 +17,12 @@ import base64
 import gzip
 import io
 import json
+import os
 import pathlib
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 
 
@@ -119,6 +123,9 @@ def main():
     aws = sub.add_parser("aws", help="Apply to running Linux EC2 VMs across enabled regions")
     aws.add_argument("--profile", required=True)
     aws.add_argument("--discovery-region", default="us-east-1", help="Use us-gov-west-1 for GovCloud")
+    azure = sub.add_parser("azure", help="Apply to running Linux VMs in one subscription via Run Command")
+    azure.add_argument("--subscription", required=True)
+    azure.add_argument("--resource-group", help="Limit to one resource group")
     args = parser.parse_args()
     payload = build_payload()
     counts = {"passed": 0, "failed": 0, "skipped": 0}
@@ -145,6 +152,38 @@ def main():
                 report("passed", target, output)
             except (RuntimeError, subprocess.TimeoutExpired) as exc:
                 report("failed", target, str(exc))
+    elif args.provider == "azure":
+        base = ["az", "--only-show-errors", "--output", "json"]
+        account = cli_json(base + ["account", "show", "--subscription", args.subscription])
+        print(f"Azure subscription: {account['name']} ({account['id']}), cloud: {account.get('environmentName')}", flush=True)
+        listing = base + ["vm", "list", "--show-details", "--subscription", args.subscription]
+        if args.resource_group:
+            listing += ["--resource-group", args.resource_group]
+        # Run Command reports success whenever the extension ran, so the exit code travels in stdout.
+        wrapped = ("rc=0; bash -s <<'EMUDHRA_PAYLOAD' || rc=$?\n" + payload
+                   + "\nEMUDHRA_PAYLOAD\necho \"EMUDHRA_EXIT=$rc\"\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as script_file:
+            script_file.write(wrapped)
+        try:
+            for vm in cli_json(listing):
+                target = f"{vm['resourceGroup']}/{vm['name']}"
+                os_type = vm["storageProfile"]["osDisk"].get("osType")
+                if vm.get("powerState") != "VM running" or os_type != "Linux":
+                    report("skipped", target, f"State: {vm.get('powerState')}; platform: {os_type}")
+                    continue
+                print(f"APPLYING: {target}", flush=True)
+                try:
+                    result = json.loads(cli(base + ["vm", "run-command", "invoke", "--subscription", args.subscription,
+                                                    "--resource-group", vm["resourceGroup"], "--name", vm["name"],
+                                                    "--command-id", "RunShellScript",
+                                                    "--scripts", "@" + script_file.name], timeout=900))
+                    detail = "\n".join(item.get("message", "") for item in result.get("value", []))
+                    passed = "EMUDHRA_EXIT=0" in detail
+                    report("passed" if passed else "failed", target, detail)
+                except (RuntimeError, subprocess.TimeoutExpired, ValueError) as exc:
+                    report("failed", target, str(exc))
+        finally:
+            os.unlink(script_file.name)
     else:
         base = ["aws", "--profile", args.profile, "--no-cli-pager", "--output", "json"]
         identity = cli_json(base + ["--region", args.discovery_region, "sts", "get-caller-identity"])

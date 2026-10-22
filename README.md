@@ -2,7 +2,7 @@
 
 Block the two parent root certificates associated with the compromised eMudhra
 intermediate CAs on RHEL-family virtual machines. The Python script inventories
-one GCP project or one AWS account and applies the Linux mitigation sequentially
+one GCP project, one AWS account, or one Azure subscription and applies the Linux mitigation sequentially
 to running hosts.
 
 The payload follows the [incident site's RHEL instructions](https://emudhra.we-have-a-problem.com/#linux).
@@ -26,6 +26,9 @@ trust and require a restart. The script does not restart services.
   and EC2 instances, and permission to send and inspect SSM Run Commands.
   Each target requires a working SSM Agent, instance IAM permissions, and SSM
   connectivity. `AWS-RunShellScript` runs the payload as root on Linux.
+- Azure: authenticated Azure CLI with VM read and Run Command permissions on the
+  subscription, and a healthy VM agent on each target. `RunShellScript` runs the
+  payload as root on Linux.
 - Hosts: RHEL, Fedora, CentOS, Rocky Linux, AlmaLinux, or Amazon Linux 2023,
   with `trust`, `update-ca-trust`, `openssl`, `curl`, `install`, `base64`, `tar`,
   and `gzip` available.
@@ -60,6 +63,32 @@ For GovCloud, select a discovery endpoint in that partition:
 ```bash
 python3 block_emudhra_fleet.py aws --profile AWS_PROFILE \
   --discovery-region us-gov-west-1
+```
+
+## Azure
+
+```bash
+python3 block_emudhra_fleet.py azure --subscription SUBSCRIPTION_ID
+# optionally limit to one resource group
+python3 block_emudhra_fleet.py azure --subscription SUBSCRIPTION_ID \
+  --resource-group RESOURCE_GROUP
+```
+
+The script prints the subscription and cloud, lists VMs with their power state,
+and sends the payload to each running Linux VM with
+`az vm run-command invoke --command-id RunShellScript`, which runs it as root.
+Run Command reports success whenever the extension runs, so the script appends
+`EMUDHRA_EXIT=<code>` to the output and only treats `EMUDHRA_EXIT=0` as a pass.
+VMs with an unhealthy VM agent or Run Command errors are reported as failures.
+Windows and non-running VMs are reported as skipped. Virtual machine scale set
+instances are not inventoried. Run Command keeps only the last 4 KB of output.
+
+Requires an authenticated Azure CLI and `Microsoft.Compute/virtualMachines/runCommand/action`
+(for example, Virtual Machine Contributor). For Azure Government, select the
+cloud first:
+
+```bash
+az cloud set --name AzureUSGovernment && az login
 ```
 
 ## What changes on each supported host
