@@ -60,8 +60,7 @@ Use it directly rather than installing a second interpreter. For example:
 python3 block_emudhra_fleet.py aws --profile AWS_PROFILE
 ```
 
-The examples below use `python3`. On RHEL 8, substitute
-`/usr/libexec/platform-python` for `python3` in each of them.
+Each provider section below shows both forms.
 
 The cloud CLI (`gcloud`, `aws`, or `az`) is the only tool that must be installed
 on the control host. It does not have to be a RHEL machine: any workstation with
@@ -72,7 +71,12 @@ Python 3.6+ and the authenticated CLI can run the script against the fleet.
 ```bash
 git clone https://github.com/stackArmor/emudhra-ca-mitigation.git
 cd emudhra-ca-mitigation
+
+# RHEL 9
 python3 block_emudhra_fleet.py gcp --project PROJECT_ID
+
+# RHEL 8
+/usr/libexec/platform-python block_emudhra_fleet.py gcp --project PROJECT_ID
 ```
 
 The script inventories every zone in the project and uses `gcloud compute ssh`
@@ -82,7 +86,11 @@ SSH failures are reported as failures. Non-running VMs are reported as skipped.
 ## AWS
 
 ```bash
+# RHEL 9
 python3 block_emudhra_fleet.py aws --profile AWS_PROFILE
+
+# RHEL 8
+/usr/libexec/platform-python block_emudhra_fleet.py aws --profile AWS_PROFILE
 ```
 
 The script prints the account ID and enumerates all enabled regions in the
@@ -94,15 +102,25 @@ are reported as skipped. Regional inventory errors are reported as failures.
 For GovCloud, select a discovery endpoint in that partition:
 
 ```bash
+# RHEL 9
 python3 block_emudhra_fleet.py aws --profile AWS_PROFILE \
+  --discovery-region us-gov-west-1
+
+# RHEL 8
+/usr/libexec/platform-python block_emudhra_fleet.py aws --profile AWS_PROFILE \
   --discovery-region us-gov-west-1
 ```
 
 ## Azure
 
 ```bash
+# RHEL 9
 python3 block_emudhra_fleet.py azure --subscription SUBSCRIPTION_ID
-# optionally limit to one resource group
+
+# RHEL 8
+/usr/libexec/platform-python block_emudhra_fleet.py azure --subscription SUBSCRIPTION_ID
+
+# optionally limit to one resource group (either interpreter)
 python3 block_emudhra_fleet.py azure --subscription SUBSCRIPTION_ID \
   --resource-group RESOURCE_GROUP
 ```
