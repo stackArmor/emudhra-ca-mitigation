@@ -133,6 +133,23 @@ PY
 
 Cloud dispatch and verification must also be assessed from actual per-host output.
 
+## Nessus detection
+
+The `nessus/` directory contains custom compliance audit files for detecting
+hosts that still trust the compromised intermediates. Upload them as custom
+audits in a Policy Compliance scan (agent or credentialed).
+
+- `emudhra_compromised_ca_unix.audit`: fails if the system OpenSSL CA bundle
+  still contains emSign Root TLS CA - G3, emSign Root CS CA - G3, emSign ECC
+  Root CA - G3, or AAA Certificate Services (matched by SHA-256 fingerprint).
+  Hosts mitigated by `block_emudhra_fleet.py` pass, because blocklisted roots
+  are removed from the generated bundle.
+- `emudhra_compromised_ca_windows.audit`: fails unless all 16 compromised
+  intermediates and Sectigo cross-signs are in `LocalMachine\Disallowed`.
+
+Both checks are offline and report the remediation commands and incident site
+link in the scan results. They do not inspect application-specific CA bundles.
+
 ## References
 
 - [Incident report and mitigation](https://emudhra.we-have-a-problem.com/)

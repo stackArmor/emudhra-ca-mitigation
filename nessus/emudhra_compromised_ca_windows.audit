@@ -1,0 +1,31 @@
+#
+# eMudhra compromised intermediate CAs (https://emudhra.we-have-a-problem.com/)
+# FAIL unless all 16 compromised intermediates / Sectigo cross-signs are in
+# LocalMachine\Disallowed (Microsoft CTL update of 2026-10-20 or
+# Block-EmudhraCompromisedCA.ps1).
+#
+
+<check_type:"Windows" version:"2">
+<group_policy:"eMudhra compromised CA">
+
+<custom_item>
+  type                 : AUDIT_POWERSHELL
+  description          : "eMudhra: compromised intermediates are in LocalMachine Disallowed store"
+  info                 : "Eight eMudhra intermediate CAs and their Sectigo cross-signs (16 certificates) have recoverable private keys. Windows trusts them via emSign Root TLS/CS CA - G3 and AAA Certificate Services unless they are explicitly disallowed."
+  solution             : "Preferred: allow Windows automatic disallowed-certificate updates (Microsoft CTL update shipped 2026-10-20); hosts without Windows Update access will not receive it.
+
+Otherwise download https://emudhra.we-have-a-problem.com/Block-EmudhraCompromisedCA.ps1, review it, and run from an elevated PowerShell:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\Block-EmudhraCompromisedCA.ps1
+
+This adds the 16 certificates to LocalMachine\\Disallowed. Applications with their own CA bundle (Java cacerts, Python certifi, Node, Go, Electron) must be updated separately."
+  see_also             : "https://emudhra.we-have-a-problem.com/"
+  reference            : "800-53|SC-17,800-53|SC-8,800-53|SI-2"
+  value_type           : POLICY_TEXT
+  value_data           : "OK"
+  powershell_args      : '$bad = @("A99B289464F3B44343270A7A1E910F02370483FE","1396BE1372BC93DFA2A433CA964DBA91548A6E57","5F014E0DB3BB8F950E0598AB280846D383FC57BE","5DFA19197D1C1CF629AF7C0CD865543C5050227C","F33ACD1F5D31AA81AC18C72C928446226D3D5914","19069BD6533BFF93FB67C71FB3376B4EA7402C3B","8AD23BC78845D6FAAE1D534BAC89F0E36BA55A11","4B0944C14F8C2CCBA4E4F32104AD920FA15EE331","7FCC31AAB874CE6C8EE8584F54CFD08646B54117","305FC1E253DCAB71B95D4995DAE3CB09D562F22A","C988F3D0CC1629FFC43165D6464C9B6EF73D6E48","8588708E875A1F8AA83524F3559080F7E17068C7","D33195A244046A3263FB5E0E83C6803A5B2E7BC3","EE26D7AE3CC71718F6E07D7D0095076F0C158F63","1F4A5D178F8B6A8EF0F6784155BD5FEA91158B12","7FDE64753A957B98F172FD2AB0D922551909C7BA"); $have = @(Get-ChildItem Cert:\LocalMachine\Disallowed | ForEach-Object { $_.Thumbprint }); $missing = @($bad | Where-Object { $have -notcontains $_ }); if ($missing.Count -gt 0) { "VULNERABLE: " + $missing.Count + " of 16 not in Disallowed: " + ($missing -join ",") } else { "OK" }'
+  ps_encoded_args      : NO
+  only_show_cmd_output : YES
+</custom_item>
+
+</group_policy>
+</check_type>

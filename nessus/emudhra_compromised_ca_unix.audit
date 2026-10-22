@@ -1,0 +1,33 @@
+#
+# eMudhra compromised intermediate CAs (https://emudhra.we-have-a-problem.com/)
+# FAIL if the system OpenSSL trust bundle still contains a root that chains
+# the compromised EM * CA - G3B / G3C intermediates.
+#
+
+<check_type:"Unix">
+
+<custom_item>
+  type        : CMD_EXEC
+  description : "eMudhra: system CA bundle does not trust roots chaining compromised intermediates"
+  info        : "Eight eMudhra intermediate CAs (EM DV/OV/EV TLS CA - G3B/G3C, EM OV CS CA - G3B/G3C) have recoverable private keys. They chain to emSign Root TLS CA - G3, emSign Root CS CA - G3 (cross-signed by emSign ECC Root CA - G3) and Sectigo AAA Certificate Services. A host whose bundle still contains any of these roots trusts certificates an attacker can mint."
+  solution    : "Preferred: update the ca-certificates package (RHEL: dnf update ca-certificates; Debian/Ubuntu: apt-get install --only-upgrade ca-certificates). Patched versions per distro are listed at https://emudhra.we-have-a-problem.com/
+
+Workaround if no patched package is available, run as root:
+
+RHEL / Rocky / Alma / Fedora / Amazon Linux 2023:
+d=/etc/pki/ca-trust/source/blocklist; [ -d $d ] || d=/etc/pki/ca-trust/source/blacklist
+trust extract --overwrite --format=pem-bundle --filter='pkcs11:object=Comodo%20AAA%20Services%20root;type=cert' $d/Comodo_AAA_Services_root.pem &&
+trust extract --overwrite --format=pem-bundle --filter='pkcs11:object=emSign%20ECC%20Root%20CA%20-%20G3;type=cert' $d/emSign_ECC_Root_CA_-_G3.pem &&
+update-ca-trust
+
+Debian / Ubuntu:
+sed -i -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' /etc/ca-certificates.conf && update-ca-certificates
+
+Applications with their own CA bundle (Java cacerts, Python certifi, Node, Go, Electron) must be updated separately."
+  see_also    : "https://emudhra.we-have-a-problem.com/"
+  reference   : "800-53|SC-17,800-53|SC-8,800-53|SI-2"
+  cmd         : "B=''; for f in /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/certs/ca-certificates.crt /etc/ssl/ca-bundle.pem /etc/ssl/cert.pem; do [ -f $f ] && B=$f && break; done; [ -z \"$B\" ] && echo 'NO BUNDLE' && exit 0; H=$(awk -v cmd='openssl x509 -noout -fingerprint -sha256' '/-----BEGIN/{c=\"\"} {c=c $0 \"\\n\"} /-----END/{print c | cmd; close(cmd)}' $B | tr -d : | grep -ioE '7DD78D5F4F13459A83DFF9ABBBA62EDBAF6F2D102BF257FD712F4D9F2746ED8D|F2EDAAFF3D9B701FB4D14C9F285F8C0BAD90FC3BCC1FA07D47F4718EDABA34A5|D7A7A0FB5D7E2731D771E9484EBCDEF71D5F0C3E0A2948782BC83EE0EA699EF4|86A1ECBA089C4A8D3BBE2734C612BA341D813E043CF9E8A862CD5C57A36BBE6B'); if [ -n \"$H\" ]; then echo \"VULNERABLE $B trusts: $H\"; else echo OK; fi"
+  expect      : "^OK$"
+</custom_item>
+
+</check_type>
