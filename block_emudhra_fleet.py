@@ -11,9 +11,14 @@ No cloud resource is changed until this script is explicitly run.
 """
 
 import argparse
+import base64
+import gzip
+import io
 import json
+import pathlib
 import subprocess
 import sys
+import tarfile
 import time
 
 
@@ -26,7 +31,7 @@ case "${ID:-}" in
   amzn) [ "${VERSION_ID:-}" = 2023 ] || { echo 'UNSUPPORTED: Amazon Linux version' >&2; exit 2; } ;;
   *) echo "UNSUPPORTED OS: ${ID:-unknown}" >&2; exit 2 ;;
 esac
-for executable in trust update-ca-trust openssl curl install; do
+for executable in trust update-ca-trust openssl curl install base64 tar gzip; do
   command -v "$executable" >/dev/null || { echo "MISSING: $executable" >&2; exit 1; }
 done
 # Source: https://emudhra.we-have-a-problem.com/#linux
@@ -35,6 +40,8 @@ blockdir=/etc/pki/ca-trust/source/blocklist
 [ -d "$blockdir" ] || { echo 'ERROR: no system blocklist directory' >&2; exit 1; }
 workdir=$(mktemp -d)
 trap 'rm -rf -- "$workdir"' EXIT
+printf '%s' '@CHAINS_ARCHIVE_BASE64@' | base64 -d > "$workdir/chains.tgz"
+tar -xzf "$workdir/chains.tgz" -C "$workdir"
 for label in 'Comodo%20AAA%20Services%20root' 'emSign%20ECC%20Root%20CA%20-%20G3'; do
   case "$label" in
     Comodo*) filename=Comodo_AAA_Services_root.pem ;;
@@ -50,23 +57,47 @@ for label in 'Comodo%20AAA%20Services%20root' 'emSign%20ECC%20Root%20CA%20-%20G3
   fi
 done
 update-ca-trust
-echo 'System trust rebuilt; checking HTTPS validation.'
+echo 'System trust rebuilt; checking ordinary HTTPS validation.'
 curl -q --cacert /etc/pki/tls/certs/ca-bundle.crt --connect-timeout 10 --max-time 20 \
   -fsS -o /dev/null https://example.com/
 verification_failed=0
-for host in dv-g3b-emudhra.we-have-a-problem.com dv-g3b-aaa-emudhra.we-have-a-problem.com; do
+for chain in "$workdir"/chains/*.pem; do
   rc=0
-  curl -q --cacert /etc/pki/tls/certs/ca-bundle.crt --connect-timeout 10 --max-time 20 \
-    -sS -o /dev/null "https://$host/" || rc=$?
-  if [ "$rc" -eq 60 ]; then
-    echo "PASS: certificate rejected: $host"
+  openssl verify -no-CApath -CAfile /etc/pki/tls/certs/ca-bundle.crt \
+    -untrusted "$chain" "$chain" > "$workdir/verify.log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ] && grep -Eq 'error (20|21|27) at [0-9]+ depth lookup' "$workdir/verify.log"; then
+    echo "PASS: original chain rejected offline: ${chain##*/}"
   else
-    echo "FAIL/INCONCLUSIVE: $host curl exit=$rc" >&2
+    echo "FAIL/INCONCLUSIVE: ${chain##*/} openssl exit=$rc" >&2
+    cat "$workdir/verify.log" >&2
     verification_failed=1
   fi
 done
 exit "$verification_failed"
 '''
+
+
+def build_payload():
+    """Carry original public chains to the host so TLS proxies cannot mask trust."""
+    chain_dir = pathlib.Path(__file__).resolve().parent / "chains"
+    expected = {f"{kind}-{generation}{suffix}-emudhra.we-have-a-problem.com.pem"
+                for kind in ("dv", "ev", "ov") for generation in ("g3b", "g3c")
+                for suffix in ("", "-aaa")}
+    if {path.name for path in chain_dir.glob("*.pem")} != expected:
+        raise RuntimeError("Expected all 12 original public chain fixtures in the chains directory")
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as archive:
+        for name in sorted(expected):
+            contents = (chain_dir / name).read_bytes()
+            info = tarfile.TarInfo("chains/" + name)
+            info.size = len(contents)
+            info.mode = 0o644
+            archive.addfile(info, io.BytesIO(contents))
+    compressed = io.BytesIO()
+    with gzip.GzipFile(fileobj=compressed, mode="wb", mtime=0) as stream:
+        stream.write(raw.getvalue())
+    encoded = base64.b64encode(compressed.getvalue()).decode("ascii")
+    return ROOT_SCRIPT.replace("@CHAINS_ARCHIVE_BASE64@", encoded)
 
 
 def cli(argv, payload=None, timeout=240):
@@ -89,6 +120,7 @@ def main():
     aws.add_argument("--profile", required=True)
     aws.add_argument("--discovery-region", default="us-east-1", help="Use us-gov-west-1 for GovCloud")
     args = parser.parse_args()
+    payload = build_payload()
     counts = {"passed": 0, "failed": 0, "skipped": 0}
 
     def report(kind, target, detail=""):
@@ -109,7 +141,7 @@ def main():
             try:
                 output = cli(["gcloud", "compute", "ssh", instance["name"], "--project", args.project,
                               "--zone", zone, "--tunnel-through-iap", "--quiet",
-                              "--command=sudo -n bash -s", "--", "-T", "-o", "ConnectTimeout=15"], ROOT_SCRIPT)
+                              "--command=sudo -n bash -s", "--", "-T", "-o", "ConnectTimeout=15"], payload)
                 report("passed", target, output)
             except (RuntimeError, subprocess.TimeoutExpired) as exc:
                 report("failed", target, str(exc))
@@ -118,7 +150,7 @@ def main():
         identity = cli_json(base + ["--region", args.discovery_region, "sts", "get-caller-identity"])
         print(f"AWS account: {identity['Account']}", flush=True)
         regions = cli_json(base + ["--region", args.discovery_region, "ec2", "describe-regions"])["Regions"]
-        parameters = {"commands": ["bash -s <<'EMUDHRA_PAYLOAD'\n" + ROOT_SCRIPT + "\nEMUDHRA_PAYLOAD"],
+        parameters = {"commands": ["bash -s <<'EMUDHRA_PAYLOAD'\n" + payload + "\nEMUDHRA_PAYLOAD"],
                       "executionTimeout": ["180"]}
         for region in sorted(item["RegionName"] for item in regions):
             regional = base + ["--region", region]

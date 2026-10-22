@@ -27,8 +27,9 @@ trust and require a restart. The script does not restart services.
   Each target requires a working SSM Agent, instance IAM permissions, and SSM
   connectivity. `AWS-RunShellScript` runs the payload as root on Linux.
 - Hosts: RHEL, Fedora, CentOS, Rocky Linux, AlmaLinux, or Amazon Linux 2023,
-  with `trust`, `update-ca-trust`, `openssl`, `curl`, and `install` available.
-- HTTPS connectivity to `example.com` and the incident site's two CLI test hosts.
+  with `trust`, `update-ca-trust`, `openssl`, `curl`, `install`, `base64`, `tar`,
+  and `gzip` available.
+- HTTPS connectivity to `example.com` for the positive validation check.
 
 ## GCP
 
@@ -69,18 +70,24 @@ python3 block_emudhra_fleet.py aws --profile AWS_PROFILE \
    into that directory when the matching certificates exist.
 4. Run `update-ca-trust` to rebuild the generated system trust stores.
 5. Confirm ordinary HTTPS validation succeeds against `example.com`.
-6. Require both incident test endpoints to fail with curl certificate error 60.
-   Successful connections, DNS errors, timeouts, and other errors do not pass.
+6. Verify all 12 bundled original test chains offline using OpenSSL and the
+   generated system CA bundle. Require missing/untrusted issuer errors
+   (OpenSSL verification errors 20, 21, or 27). Accepted chains and unrelated
+   verification errors do not pass.
 
 The test endpoints are:
 
 - `https://dv-g3b-emudhra.we-have-a-problem.com/`
 - `https://dv-g3b-aaa-emudhra.we-have-a-problem.com/`
 
-A PASS establishes the tested curl behavior; it is not proof of every
-application's effective trust policy. TLS interception or unrelated certificate
-errors can affect the online checks. The script explicitly selects the generated
-system CA bundle and disables curl's automatic configuration-file loading.
+TLS interception proxies can re-sign the live test hosts, causing curl to succeed
+even when the original eMudhra chains are blocked. The script uses the original
+public certificate chains bundled in [chains](chains/README.md), carried in a
+compressed remote payload, to verify trust without that interference. A PASS
+establishes rejection of those original chains by the generated system CA bundle;
+it is not proof of every application's effective trust policy. The ordinary HTTPS
+check explicitly selects the same bundle and disables curl's automatic
+configuration-file loading.
 
 The script can be run again. It leaves installed blocklist files in place if
 verification fails, so a verification error does not automatically restore trust.
